@@ -1,6 +1,18 @@
+# Ignore node_modules and environment files
 node_modules/
 backend/node_modules/
 .env
 backend/.env
 uploads/
 backend/uploads/
+
+#  .Net build files
+bin/
+obj/
+**/bin/
+**/obj/
+
+# User-specific files
+*.user
+*.suo
+.vs/
