@@ -23,7 +23,7 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Role>().HasData(
             new Role { RoleId = 1, RoleName = "Admin" },
-            new Role { RoleId = 2, RoleName = "User" }
+            new Role { RoleId = 2, RoleName = "Standard" }
         );
 
         modelBuilder.Entity<FileType>().HasData(
