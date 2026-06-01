@@ -4,3 +4,15 @@ backend/node_modules/
 backend/.env
 uploads/
 backend/uploads/
+
+# .Net build output
+bin/
+obj/
+**/obj/
+**/bin/
+
+# .Net Local settings / secrets
+backend/appsettings.json
+backend/appsettings.Development.json
+backeend/appsettings.*.json
+backend/appsettings.Example.json
