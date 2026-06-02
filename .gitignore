@@ -3,9 +3,6 @@ backend/node_modules/
 .env
 backend/.env
 uploads/
-<<<<<<< Updated upstream
-backend/uploads/
-=======
 backend/uploads/
 
 # .Net build output
@@ -18,4 +15,4 @@ obj/
 backend/appsettings.Development.json
 backend/appsettings.*.json
 backend/appsettings.Example.json
->>>>>>> Stashed changes
+
