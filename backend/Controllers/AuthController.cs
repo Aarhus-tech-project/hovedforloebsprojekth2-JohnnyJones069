@@ -3,6 +3,10 @@ using backend.Dtos;
 using backend.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 
 namespace backend.Controllers;
 
@@ -11,12 +15,13 @@ namespace backend.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IConfiguration _configuration;
 
-    public AuthController(AppDbContext context)
+    public AuthController(AppDbContext context, IConfiguration configuration)
     {
         _context = context;
+        _configuration = configuration;
     }
-
 
     [HttpPost("register")]
     public async Task<IActionResult> Register(RegisterRequest request)
@@ -55,7 +60,6 @@ public class AuthController : ControllerBase
             user.UserId,
             user.Username,
             user.RoleId
-
         });
     }
 
@@ -78,12 +82,45 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid username or password" });
         }
 
-        return Ok(new
+        var token = CreateToken(user);
+
+        return Ok(new LoginResponse
         {
-            message = "Login Successful",
-            user.UserId,
-            user.Username,
-            role = user.Role?.RoleName
+            Message = "Login successful",
+            Token = token,
+            UserId = user.UserId,
+            Username = user.Username,
+            Role = user.Role?.RoleName ?? ""
         });
+    }
+
+    private string CreateToken(User user)
+    {
+        var jwtKey = _configuration["Jwt:Key"];
+
+        if (string.IsNullOrWhiteSpace(jwtKey))
+        {
+            throw new InvalidOperationException("JWT key is missing.");
+        }
+
+        var claims = new List<Claim>
+        {
+            new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
+            new Claim(ClaimTypes.Name, user.Username),
+            new Claim(ClaimTypes.Role, user.Role?.RoleName ?? "")
+        };
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: _configuration["Jwt:Issuer"],
+            audience: _configuration["Jwt:Audience"],
+            claims: claims,
+            expires: DateTime.UtcNow.AddHours(2),
+            signingCredentials: credentials
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 }

@@ -12,7 +12,7 @@ obj/
 **/bin/
 
 # .Net Local settings / secrets
-backend/appsettings.json
 backend/appsettings.Development.json
-backeend/appsettings.*.json
+backend/appsettings.*.json
 backend/appsettings.Example.json
+
