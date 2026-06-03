@@ -1,0 +1,27 @@
+# .NET
+bin/
+obj/
+
+# User/secrets/local config
+*.user
+*.suo
+.vs/
+backend/appsettings.Development.json
+
+# Uploaded files
+backend/uploads/*
+!backend/uploads/.gitkeep
+!backend/uploads/temp/
+!backend/uploads/temp/.gitkeep
+!backend/uploads/users/
+!backend/uploads/users/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
