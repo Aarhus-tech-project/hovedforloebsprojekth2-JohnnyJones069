@@ -3,6 +3,7 @@ using backend.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 
 namespace backend.Controllers;
 
@@ -20,18 +21,68 @@ public class FilesController : ControllerBase
         _configuration = configuration;
     }
 
+    private bool TryGetCurrentUser(out int currentUserId, out string role)
+    {
+        currentUserId = 0;
+        role = string.Empty;
+
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var roleClaim = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+
+        if (string.IsNullOrEmpty(userIdClaim))
+        {
+            return false;
+        }
+
+        if (!int.TryParse(userIdClaim, out currentUserId))
+        {
+            return false;
+        }
+
+        role = roleClaim ?? string.Empty;
+        return true;
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetFiles()
     {
-        var files = await _context.FileRecords
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var roleClaim = User.FindFirst(ClaimTypes.Role)?.Value;
+
+        if (string.IsNullOrEmpty(userIdClaim))
+        {
+            return Unauthorized("User ID or role was not found in token.");
+        }
+
+        if (!int.TryParse(userIdClaim, out int userId))
+        {
+            return Unauthorized("Invalid user ID in token.");
+        }
+
+        var isAdmin = roleClaim == "Admin";
+
+        var query = _context.FileRecords
             .Include(f => f.Owner)
             .Include(f => f.FileType)
+            .Include(f => f.Permissions)
+            .AsQueryable();
+
+        if (!isAdmin)
+        {
+            query = query.Where(f => 
+                f.OwnerId == userId ||
+                f.Permissions.Any(p => p.UserId == userId)
+            );
+        }
+
+        var files = await query
             .Select(f => new
             {
                 f.FileRecordId,
+                f.PublicId,
                 f.OriginalName,
                 f.StoredName,
-                f.StoragePath,
+                f.RelativePath,
                 f.SizeBytes,
                 f.UploadedAt,
                 Owner = f.Owner != null ? f.Owner.Username : null,
@@ -42,26 +93,42 @@ public class FilesController : ControllerBase
         return Ok(files);
     }
 
-    [HttpGet("{id}")]
-    public async Task<IActionResult> GetFileById(int id)
+    [HttpGet("{publicId}")]
+    public async Task<IActionResult> GetFileById(Guid publicId)
     {
+        if (!TryGetCurrentUser(out int currentUserId, out string role))
+        {
+            return Unauthorized("Invalid or missing user token.");
+        }
+
         var file = await _context.FileRecords
             .Include(f => f.Owner)
             .Include(f => f.FileType)
             .Include(f => f.Metadata)
-            .FirstOrDefaultAsync(f => f.FileRecordId == id);
+            .Include(f => f.Permissions)
+            .FirstOrDefaultAsync(f => f.PublicId == publicId);
 
         if (file == null)
         {
             return NotFound(new { message = "File not found" });
         }
 
+        var isAdmin = role == "Admin";
+        var isOwner = file.OwnerId == currentUserId;
+        var hasPermission = file.Permissions.Any(p => p.UserId == currentUserId);
+
+        if (!isAdmin && !isOwner && !hasPermission)
+        {
+            return Forbid();
+        }
+
         return Ok(new
         {
             file.FileRecordId,
+            file.PublicId,
             file.OriginalName,
             file.StoredName,
-            file.StoragePath,
+            file.RelativePath,
             file.SizeBytes,
             file.UploadedAt,
             Owner = file.Owner?.Username,
@@ -71,54 +138,76 @@ public class FilesController : ControllerBase
     }
 
     [HttpPost("upload")]
-    public async Task<IActionResult> UploadFile(IFormFile file, int ownerId)
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> UploadFile(IFormFile file)
     {
         if (file == null || file.Length == 0)
         {
-            return BadRequest(new { message = "No file uploaded" });
+            return BadRequest("No file uploaded.");
         }
 
-        var ownerExists = await _context.Users.AnyAsync(u => u.UserId == ownerId);
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
-        if (!ownerExists)
+        if (string.IsNullOrEmpty(userIdClaim))
         {
-            return BadRequest(new { message = $"OwnerId {ownerId} does not exist" });
+            return Unauthorized("User ID was not found in token.");
+        }
+
+        if (!int.TryParse(userIdClaim, out int ownerId))
+        {
+            return Unauthorized("Invalid user ID in token.");
+        }
+
+        var owner = await _context.Users
+            .FirstOrDefaultAsync(u => u.UserId == ownerId);
+
+        if (owner == null)
+        {
+            return Unauthorized("User does not exist.");
         }
 
         var extension = Path.GetExtension(file.FileName).ToLower();
 
         var fileType = await _context.FileTypes
-            .FirstOrDefaultAsync(ft => ft.Extension == extension && ft.IsAllowed);
+            .FirstOrDefaultAsync(ft => ft.Extension.ToLower() == extension);
 
         if (fileType == null)
         {
-            return BadRequest(new { message = $"File type {extension} is not allowed" });
+            return BadRequest("File type is not allowed.");
         }
 
         var uploadPath = _configuration["FileStorage:UploadPath"] ?? "uploads";
-        var fullUploadPath = Path.Combine(Directory.GetCurrentDirectory(), uploadPath);
-
-        if (!Directory.Exists(fullUploadPath))
-        {
-            Directory.CreateDirectory(fullUploadPath);
-        }
+        var fullUploadRoot = Path.Combine(Directory.GetCurrentDirectory(), uploadPath);
 
         var storedName = $"{Guid.NewGuid()}{extension}";
-        var storagePath = Path.Combine(fullUploadPath, storedName);
 
-        await using (var stream = new FileStream(storagePath, FileMode.Create))
+        var relativePath = Path.Combine(
+            "users",
+            owner.PublicId.ToString(),
+            "documents",
+            DateTime.UtcNow.Year.ToString(),
+            DateTime.UtcNow.Month.ToString("00"),
+            storedName
+        );
+
+        var fullPath = Path.Combine(fullUploadRoot, relativePath);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+
+        await using (var stream = new FileStream(fullPath, FileMode.Create))
         {
             await file.CopyToAsync(stream);
         }
 
         var fileRecord = new FileRecord
         {
+            PublicId = Guid.NewGuid(),
             OriginalName = file.FileName,
             StoredName = storedName,
-            StoragePath = storagePath,
+            RelativePath = relativePath.Replace("\\", "/"),
             SizeBytes = file.Length,
             UploadedAt = DateTime.UtcNow,
-            OwnerId = ownerId,
+            OwnerId = owner.UserId,
             FileTypeId = fileType.FileTypeId
         };
 
@@ -127,24 +216,40 @@ public class FilesController : ControllerBase
 
         return Ok(new
         {
-            message = "File uploaded",
-            fileRecord.FileRecordId,
-            fileRecord.OriginalName,
-            fileRecord.StoredName,
-            fileRecord.SizeBytes,
-            fileRecord.UploadedAt
+            message = "File uploaded successfully.",
+            fileId = fileRecord.FileRecordId,
+            publicId = fileRecord.PublicId,
+            originalName = fileRecord.OriginalName,
+            storedName = fileRecord.StoredName,
+            relativePath = fileRecord.RelativePath,
+            ownerId = fileRecord.OwnerId
         });
     }
 
-    [HttpGet("download/{id}")]
-    public async Task<IActionResult> DownloadFile(int id)
+    [HttpGet("download/{publicId}")]
+    public async Task<IActionResult> DownloadFile(Guid publicId)
     {
+        if (!TryGetCurrentUser(out int currentUserId, out string role))
+        {
+            return Unauthorized("Invalid or missing user token.");
+        }
+
         var fileRecord = await _context.FileRecords
-            .FirstOrDefaultAsync(f => f.FileRecordId == id);
+            .Include(f => f.Permissions)
+            .FirstOrDefaultAsync(f => f.PublicId == publicId);
 
         if (fileRecord == null)
         {
             return NotFound(new { message = "File not found in database" });
+        }
+
+        var isAdmin = role == "Admin";
+        var isOwner = fileRecord.OwnerId == currentUserId;
+        var hasPermission = fileRecord.Permissions.Any(p => p.UserId == currentUserId);
+
+        if (!isAdmin && !isOwner && !hasPermission)
+        {
+            return Forbid();
         }
 
         if (!System.IO.File.Exists(fileRecord.StoragePath))
@@ -157,15 +262,28 @@ public class FilesController : ControllerBase
         return File(fileBytes, "application/octet-stream", fileRecord.OriginalName);
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> DeleteFile(int id)
+    [HttpDelete("{publicId}")]
+    public async Task<IActionResult> DeleteFile(Guid publicId)
     {
+        if (!TryGetCurrentUser(out int currentUserId, out string role))
+        {
+            return Unauthorized("Invalid or missing user token.");
+        }
+
         var fileRecord = await _context.FileRecords
-            .FirstOrDefaultAsync(f => f.FileRecordId == id);
+            .FirstOrDefaultAsync(f => f.PublicId == publicId);
 
         if (fileRecord == null)
         {
             return NotFound(new { message = "File not found" });
+        }
+
+        var isAdmin = role == "Admin";
+        var isOwner = fileRecord.OwnerId == currentUserId;
+
+        if (!isAdmin && !isOwner)
+        {
+            return Forbid();
         }
 
         if (System.IO.File.Exists(fileRecord.StoragePath))

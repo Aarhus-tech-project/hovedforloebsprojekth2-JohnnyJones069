@@ -1,18 +1,27 @@
-node_modules/
-backend/node_modules/
-.env
-backend/.env
-uploads/
-backend/uploads/
-
-# .Net build output
+# .NET
 bin/
 obj/
-**/obj/
-**/bin/
 
-# .Net Local settings / secrets
+# User/secrets/local config
+*.user
+*.suo
+.vs/
 backend/appsettings.Development.json
-backend/appsettings.*.json
-backend/appsettings.Example.json
 
+# Uploaded files
+backend/uploads/*
+!backend/uploads/.gitkeep
+!backend/uploads/temp/
+!backend/uploads/temp/.gitkeep
+!backend/uploads/users/
+!backend/uploads/users/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
