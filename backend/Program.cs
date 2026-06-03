@@ -11,6 +11,20 @@ builder.Services.AddControllers();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+var frontendOrigin = builder.Configuration["App:FrontendOrigin"]
+    ?? "http://localhost:5173";
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("FrontendOnly", policy =>
+    {
+        policy
+            .WithOrigins(frontendOrigin)
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 var jwtKey = builder.Configuration["Jwt:Key"];
 
 if (string.IsNullOrEmpty(jwtKey))
@@ -43,6 +57,7 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 
 builder.Services.AddEndpointsApiExplorer();
+
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
@@ -50,7 +65,12 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+app.UseCors("FrontendOnly");
 
 app.UseAuthentication();
 app.UseAuthorization();
